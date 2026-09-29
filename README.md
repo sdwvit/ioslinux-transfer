@@ -1,82 +1,89 @@
 # ioslinux-transfer
 
-Get all photos and videos off an iPhone on Linux **reliably**, verify them, and keep a
-backup replica in sync, so you can free space on the phone without losing anything.
+Move every photo and video from your iPhone to Linux, double-check that each file arrived
+safely, and keep a backup drive in sync. Then you can free up space on your phone with
+confidence. 📸➡️🐧
 
-Written after a long fight with KDE/gphoto2/PTP. This is the approach that actually works.
+These scripts came out of a long afternoon of trial and error. What's here is the approach
+that turned out to work smoothly, so you can skip straight to it.
 
-## TL;DR
+## Quick start
 
 ```bash
 sudo apt install libimobiledevice-utils ifuse usbmuxd rsync sqlite3   # Debian/Ubuntu
 
-./check-device.sh                    # is the phone visible & paired?
+./check-device.sh                    # is the phone visible and paired?
 ./copy-iphone.sh DCIM                /media/master/photos/iphone/DCIM
-./copy-iphone.sh PhotoData/Mutations /media/master/photos/iphone/Mutations   # edited versions
+./copy-iphone.sh PhotoData/Mutations /media/master/photos/iphone/Mutations   # your edited versions
 ifuse -o ro /tmp/iphone && ./verify.sh /tmp/iphone/DCIM /media/master/photos/iphone/DCIM
-./sync-replica.sh /media/master/photos /media/backup/photos            # dry run + conflict report
-./sync-replica.sh /media/master/photos /media/backup/photos --apply
+./sync-replica.sh /media/master/photos /media/backup/photos            # preview + conflict report
+./sync-replica.sh /media/master/photos /media/backup/photos --apply    # sync for real
 ```
 
-## Scripts
+## The scripts
 
-| Script | What it does |
+| Script | What it does for you |
 |---|---|
-| `copy-iphone.sh <phone-subdir> <dest>` | Mounts the phone **read-only** via AFC (`ifuse`) and rsyncs. Survives disconnects: waits for the device, re-pairs if needed, remounts, resumes. Pauses if the destination drive disappears. Never deletes anything. |
-| `check-device.sh [--watch]` | Read-only diagnostics: USB configuration, usbmuxd visibility, pairing, and which processes hold the device. `--watch` prints state changes every second. |
-| `inspect-library.sh <mount>` | Reads a copy of `Photos.sqlite`: asset counts, how many are edited, shared-album items, iCloud state. Tells you what `DCIM` alone would miss. |
-| `verify.sh <phone-subdir> <dest>` | Checks that every phone file exists in the copy with identical size. Exit 0 = safe. |
-| `sync-replica.sh <master> <follower> [--apply]` | One-way master→follower sync. Dry run first with a **conflict report** (files that differ, files only on follower). With `--apply`, anything replaced/removed on the follower is moved to `_sync_conflicts/<timestamp>/`, not destroyed. |
+| `copy-iphone.sh <phone-subdir> <dest>` | Mounts the phone read-only over AFC (`ifuse`) and copies with rsync. If the connection drops, it waits for the phone, re-pairs, remounts and picks up right where it left off. If the destination drive goes away, it pauses patiently until it's back. Your phone stays exactly as it was. |
+| `check-device.sh [--watch]` | A friendly health check: USB configuration, usbmuxd visibility, pairing status, and which programs are talking to the phone. `--watch` shows live changes every second. |
+| `inspect-library.sh <mount>` | Peeks into a copy of the Photos database and tells you how many photos and videos you have, how many you've edited, what lives in Shared Albums, and whether iCloud Photos is on. Great for knowing what to copy beyond `DCIM`. |
+| `verify.sh <phone-subdir> <dest>` | Confirms every file on the phone has a matching copy with the same size. A green "OK" means you're good to go. |
+| `sync-replica.sh <master> <follower> [--apply]` | Keeps a backup drive in step with your main drive, one way. First it shows a preview with any conflicts (files that differ, files only on the backup). With `--apply`, anything it replaces or removes on the backup is tucked safely into `_sync_conflicts/<timestamp>/`. |
 
-## What is on the phone (and what DCIM misses)
+## What lives where on your iPhone
 
-- `DCIM/1xxAPPLE/`: camera-roll originals (`.HEIC`, `.JPG`, `.MOV`, `.PNG`), Live Photo
-  video halves (`.MOV` next to the `.HEIC`), and `.AAE` edit sidecars.
-- `PhotoData/Mutations/`: **rendered edited versions** (`FullSizeRender.jpg/.mov`). If you
-  edited photos on the phone and only copy `DCIM`, you keep the unedited originals only.
-- Shared Albums live in iCloud, not in the camera roll; deleting the camera roll doesn't touch them.
-- The Photos app's "storage used" number is larger than `DCIM` because it includes edits,
+- **`DCIM/1xxAPPLE/`** holds your camera roll originals (`.HEIC`, `.JPG`, `.MOV`, `.PNG`), the
+  video half of Live Photos (a `.MOV` beside its `.HEIC`), and small `.AAE` edit sidecars.
+- **`PhotoData/Mutations/`** holds the finished versions of photos you edited on the phone
+  (`FullSizeRender.jpg` / `.mov`). Copy this folder too if you'd like to keep your edits.
+- **Shared Albums** live in iCloud, separate from your camera roll, so they stay put when you
+  tidy up the camera roll.
+- The Photos app's storage number is a bit bigger than `DCIM` because it also counts edits,
   thumbnails and caches.
-- If **iCloud Photos is off**, the phone is the only copy. If it's **on** with "Optimize
-  iPhone Storage", some originals are not on the phone at all (use
-  [icloudpd](https://github.com/icloud-photos-downloader/icloud_photos_downloader) for those), and
-  deleting on the phone deletes from iCloud too.
+- **iCloud Photos off?** Your phone holds the only copy, so these scripts are your backup.
+  **iCloud Photos on with "Optimize iPhone Storage"?** Some originals live only in iCloud; grab
+  those with [icloudpd](https://github.com/icloud-photos-downloader/icloud_photos_downloader).
+  Keep in mind that deleting on the phone also deletes from iCloud in this mode.
 
-## Pitfalls we hit (so you don't)
+## Tips for a smooth transfer
 
-1. **Use AFC (`ifuse`), not PTP (gphoto2 / KDE `camera:/` / GNOME gphoto).** PTP on iPhones is
-   fragile: after one session closes, new sessions often time out until you replug.
-2. **gphoto2 caches empty listings.** If a PTP session opens before you tap *Trust* or unlock,
-   it reports an empty store and keeps it that way for the whole session.
-3. **File managers grab the device.** Dolphin's `kio_kamera` worker, or `gvfs-gphoto2`, claims
-   the USB interface; everything else then gets "Could not claim the USB device". Close any
-   file-manager window showing the phone. Note that a `dolphin camera:/` process can outlive its window.
-4. **Plasma's "Remove"/eject leaves the iPhone unconfigured** (`bConfigurationValue` empty).
-   Nothing can talk to it until you physically replug. `check-device.sh` shows `cfg=[]`.
-5. **Don't hammer the device with retry loops that don't release it.** A failed init that keeps
-   the USB handle open blocks every later attempt, including usbmuxd.
-6. **One reader at a time on an `ifuse` mount.** Running `find`/`du` on the mount while rsync
-   copies can hang AFC; then even `ls` blocks. Unmount (`fusermount -uz`) and remount.
-7. **usbmuxd can silently lose the phone** under sustained load while USB stays connected
-   (`lsusb` shows it, `idevice_id -l` doesn't). Fixes, in order: a different **USB port or
-   controller** (rear motherboard ports), a different **cable**, `sudo systemctl restart usbmuxd`.
-   Moving the phone to another USB controller fixed it for us.
-8. **Keep the phone unlocked** (Settings → Display → Auto-Lock → Never, during transfer).
-9. **Don't unplug the destination drive mid-copy.** `copy-iphone.sh` pauses if it disappears;
-   run a filesystem check (`fsck.exfat -n`) before trusting it again.
-10. **exFAT/FAT timestamps**: use `--modify-window=2` for size+mtime comparisons.
-11. **`pkill -f <pattern>`** also matches the shell that runs it if the pattern appears in the
-    command line. Kill by PID.
+1. **Go with AFC (`ifuse`).** It's the same channel iTunes uses and it's very dependable. The
+   camera/PTP route (gphoto2, KDE `camera:/`, GNOME gphoto) tends to get stuck after the first
+   session.
+2. **Tap *Trust* and unlock before connecting.** PTP tools read the photo list once at the
+   start of a session, so an early connection can show an empty phone for the whole session.
+3. **Close file-manager windows showing the phone.** Dolphin's `kio_kamera` worker and
+   `gvfs-gphoto2` like to hold on to the device, which leaves other tools waiting. A
+   `dolphin camera:/` process can keep running after its window closes, so check with
+   `check-device.sh`.
+4. **Unplug the cable to disconnect.** Plasma's "Remove"/eject action leaves the iPhone
+   unconfigured (`cfg=[]` in `check-device.sh`), and a quick replug brings it back.
+5. **Let each connection attempt clean up after itself.** Retry loops work best when every
+   failed attempt releases the USB handle before the next one.
+6. **Give the `ifuse` mount one job at a time.** Let rsync have the mount to itself while it
+   copies; browsing with `find` or `du` at the same moment can freeze AFC. If that happens,
+   `fusermount -uz` and remount.
+7. **Pick a solid USB port and cable.** If `lsusb` sees the phone but `idevice_id -l` comes up
+   empty, try a rear motherboard port or a different USB controller, then a different cable,
+   then `sudo systemctl restart usbmuxd`. Switching controllers made all the difference for us.
+8. **Keep the phone awake.** Settings → Display & Brightness → Auto-Lock → Never, just for the
+   transfer.
+9. **Keep the destination drive plugged in.** `copy-iphone.sh` pauses if the drive goes away.
+   If it was unplugged mid-copy, a quick `fsck.exfat -n` gives you peace of mind.
+10. **exFAT and FAT store timestamps coarsely.** Use `--modify-window=2` when comparing by
+    size and time.
+11. **Stop processes by PID.** `pkill -f <pattern>` also matches the shell running it when the
+    pattern appears in its command line.
 
-## Freeing space on the phone
+## Freeing space on your phone
 
-Only after `verify.sh` passes for `DCIM` **and** you've copied `PhotoData/Mutations` (if you
-edit on the phone) **and** the replica sync is done. Then delete in the Photos app and empty
-*Recently Deleted*. These scripts never delete anything on the phone.
+Once `verify.sh` reports OK for `DCIM`, you've copied `PhotoData/Mutations` (if you edit on
+your phone), and your backup is synced, you're all set. Delete from the Photos app and empty
+*Recently Deleted*. The scripts leave deleting entirely up to you.
 
-## Speed
+## How long it takes
 
-Expect ~15–25 MB/s over USB 2 AFC (≈ 1 hour per 70 GB).
+Around 15–25 MB/s over USB 2 AFC, roughly an hour for every 70 GB. A good time for a coffee ☕
 
 ## License
 
