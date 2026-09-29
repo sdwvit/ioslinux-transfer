@@ -1,106 +1,147 @@
 # ioslinux-transfer
 
-Move every photo and video from your iPhone to Linux, double-check that each file arrived
-safely, and keep a backup drive in sync. Then you can free up space on your phone with
-confidence. 📸➡️🐧
+Reliable tools for transferring photos and videos from an iPhone to Linux, verifying transfer integrity, and keeping a secondary backup drive synchronized.
 
-These scripts came out of a long afternoon of trial and error. What's here is the approach
-that turned out to work smoothly, so you can skip straight to it.
+The workflow is designed to make it safe to remove media from the iPhone after confirming that:
+
+- all expected files were copied successfully;
+- transferred files match the originals by size;
+- edited versions are preserved where applicable;
+- a secondary backup is synchronized with the primary archive.
+
+The scripts in this repository are based on a transfer workflow tested against common iPhone/Linux USB and AFC failure modes.
 
 ## Quick start
 
 ```bash
 sudo apt install libimobiledevice-utils ifuse usbmuxd rsync sqlite3   # Debian/Ubuntu
 
-./check-device.sh                    # is the phone visible and paired?
+./check-device.sh
 ./copy-iphone.sh DCIM                /media/master/photos/iphone/DCIM
-./copy-iphone.sh PhotoData/Mutations /media/master/photos/iphone/Mutations   # your edited versions
-ifuse -o ro /tmp/iphone && ./verify.sh /tmp/iphone/DCIM /media/master/photos/iphone/DCIM
-./sync-replica.sh /media/master/photos /media/backup/photos            # preview + conflict report
-./sync-replica.sh /media/master/photos /media/backup/photos --apply    # sync for real
+./copy-iphone.sh PhotoData/Mutations /media/master/photos/iphone/Mutations
+
+ifuse -o ro /tmp/iphone
+./verify.sh /tmp/iphone/DCIM /media/master/photos/iphone/DCIM
+
+./sync-replica.sh /media/master/photos /media/backup/photos
+./sync-replica.sh /media/master/photos /media/backup/photos --apply
 ```
 
-## The scripts
+## Scripts
 
-| Script | What it does for you |
+| Script | Description |
 |---|---|
-| `copy-iphone.sh <phone-subdir> <dest>` | Mounts the phone read-only over AFC (`ifuse`) and copies with rsync. If the connection drops, it waits for the phone, re-pairs, remounts and picks up right where it left off. If the destination drive goes away, it pauses patiently until it's back. Your phone stays exactly as it was. |
-| `check-device.sh [--watch]` | A friendly health check: USB configuration, usbmuxd visibility, pairing status, and which programs are talking to the phone. `--watch` shows live changes every second. |
-| `inspect-library.sh <mount>` | Peeks into a copy of the Photos database and tells you how many photos and videos you have, how many you've edited, what lives in Shared Albums, and whether iCloud Photos is on. Great for knowing what to copy beyond `DCIM`. |
-| `verify.sh <phone-subdir> <dest>` | Confirms every file on the phone has a matching copy with the same size. A green "OK" means you're good to go. |
-| `sync-replica.sh <master> <follower> [--apply]` | Keeps a backup drive in step with your main drive, one way. First it shows a preview with any conflicts (files that differ, files only on the backup). With `--apply`, anything it replaces or removes on the backup is tucked safely into `_sync_conflicts/<timestamp>/`. |
+| `copy-iphone.sh <phone-subdir> <dest>` | Mounts the iPhone read-only over AFC using `ifuse` and copies files with `rsync`. If the connection is interrupted, the script waits for the device, re-establishes pairing and the mount, and resumes the transfer. If the destination drive becomes unavailable, the transfer pauses until it returns. The script does not modify files on the iPhone. |
+| `check-device.sh [--watch]` | Reports USB configuration, `usbmuxd` visibility, pairing status, and processes currently accessing the device. `--watch` refreshes the status once per second. |
+| `inspect-library.sh <mount>` | Inspects a copy of the Photos database and reports photo/video counts, edited assets, Shared Album content, and iCloud Photos status. Useful for determining which data should be copied in addition to `DCIM`. |
+| `verify.sh <phone-subdir> <dest>` | Verifies that every source file has a corresponding destination file with the same size. An `OK` result indicates that the checked files were transferred successfully. |
+| `sync-replica.sh <master> <follower> [--apply]` | Performs one-way synchronization from a primary archive to a backup drive. By default, it previews changes and reports conflicts. With `--apply`, replaced or removed files from the backup are preserved under `_sync_conflicts/<timestamp>/`. |
 
-## What lives where on your iPhone
+## iPhone photo storage layout
 
-- **`DCIM/1xxAPPLE/`** holds your camera roll originals (`.HEIC`, `.JPG`, `.MOV`, `.PNG`), the
-  video half of Live Photos (a `.MOV` beside its `.HEIC`), and small `.AAE` edit sidecars.
-- **`PhotoData/Mutations/`** holds the finished versions of photos you edited on the phone
-  (`FullSizeRender.jpg` / `.mov`). Copy this folder too if you'd like to keep your edits.
-- **Shared Albums** live in iCloud, separate from your camera roll, so they stay put when you
-  tidy up the camera roll.
-- The Photos app's storage number is a bit bigger than `DCIM` because it also counts edits,
-  thumbnails and caches.
-- **iCloud Photos off?** Your phone holds the only copy, so these scripts are your backup.
-  **iCloud Photos on with "Optimize iPhone Storage"?** Some originals live only in iCloud; grab
-  those with [icloudpd](https://github.com/icloud-photos-downloader/icloud_photos_downloader).
-  Keep in mind that deleting on the phone also deletes from iCloud in this mode.
+- **`DCIM/1xxAPPLE/`** contains camera-roll originals such as `.HEIC`, `.JPG`, `.MOV`, and `.PNG` files. Live Photos typically include a `.MOV` file alongside the corresponding image. `.AAE` files contain edit metadata.
 
-## Tips for a smooth transfer
+- **`PhotoData/Mutations/`** contains rendered versions of media edited in the Photos app, typically as `FullSizeRender.jpg` or `.mov`. Copy this directory if preserving edited versions is important.
 
-1. **Go with AFC (`ifuse`).** It's the same channel iTunes uses and it's very dependable. The
-   camera/PTP route (gphoto2, KDE `camera:/`, GNOME gphoto) tends to get stuck after the first
-   session.
-2. **Tap *Trust* and unlock before connecting.** PTP tools read the photo list once at the
-   start of a session, so an early connection can show an empty phone for the whole session.
-3. **Close file-manager windows showing the phone.** Dolphin's `kio_kamera` worker and
-   `gvfs-gphoto2` like to hold on to the device, which leaves other tools waiting. A
-   `dolphin camera:/` process can keep running after its window closes, so check with
-   `check-device.sh`.
-4. **Unplug the cable to disconnect.** Plasma's "Remove"/eject action leaves the iPhone
-   unconfigured (`cfg=[]` in `check-device.sh`), and a quick replug brings it back.
-5. **Let each connection attempt clean up after itself.** Retry loops work best when every
-   failed attempt releases the USB handle before the next one.
-6. **Give the `ifuse` mount one job at a time.** Let rsync have the mount to itself while it
-   copies; browsing with `find` or `du` at the same moment can freeze AFC. If that happens,
-   `fusermount -uz` and remount.
-7. **Pick a solid USB port and cable.** If `lsusb` sees the phone but `idevice_id -l` comes up
-   empty, try a rear motherboard port or a different USB controller, then a different cable,
-   then `sudo systemctl restart usbmuxd`. Switching controllers made all the difference for us.
-8. **Keep the phone awake.** Settings → Display & Brightness → Auto-Lock → Never, just for the
-   transfer.
-9. **Keep the destination drive plugged in.** `copy-iphone.sh` pauses if the drive goes away.
-   If it was unplugged mid-copy, a quick `fsck.exfat -n` gives you peace of mind.
-10. **exFAT and FAT store timestamps coarsely.** Use `--modify-window=2` when comparing by
-    size and time.
-11. **Stop processes by PID.** `pkill -f <pattern>` also matches the shell running it when the
-    pattern appears in its command line.
+- **Shared Albums** are stored through iCloud separately from the local camera roll. Removing items from the camera roll does not necessarily affect Shared Album copies.
 
-## Freeing space on your phone
+- The storage usage reported by the Photos app is usually larger than the size of `DCIM` because it also includes rendered edits, thumbnails, databases, and caches.
 
-Once `verify.sh` reports OK for `DCIM`, you've copied `PhotoData/Mutations` (if you edit on
-your phone), and your backup is synced, you're all set. Delete from the Photos app and empty
-*Recently Deleted*. The scripts leave deleting entirely up to you.
+- If **iCloud Photos is disabled**, the iPhone may contain the only copy of the original media.
 
-## How long it takes
+- If **iCloud Photos is enabled with Optimize iPhone Storage**, some full-resolution originals may exist only in iCloud. In that case, use a tool such as [icloudpd](https://github.com/icloud-photos-downloader/icloud_photos_downloader) to download the cloud originals separately. Note that deleting an item from an iPhone using iCloud Photos also deletes it from iCloud.
 
-Plan on roughly **15–25 MB/s**, about an hour for every 70 GB. A good time for a coffee ☕
+## Transfer recommendations
 
-Here's where that number comes from:
+1. **Prefer AFC through `ifuse`.**  
+   AFC is the file-transfer protocol used by Apple device-management software and is generally more reliable for long-running transfers than the PTP-based paths exposed through `gphoto2`, KDE `camera:/`, or GNOME GVFS.
 
-- **Lightning is USB 2.0.** Every Lightning iPhone connects at USB 2.0 High Speed (480 Mbit/s),
-  whatever cable or port you use. You can see it in `check-device.sh` as `speed=480M`. After
-  USB protocol overhead that leaves about 35–40 MB/s in practice.
-- **AFC runs one request at a time.** Each read travels through usbmuxd and `ifuse` (a
-  single-threaded FUSE filesystem) and waits for its reply before the next begins, which
-  brings typical throughput to 15–25 MB/s.
-- **Photos are small files.** A typical HEIC or JPG is 2–5 MB, so opening and closing each
-  file takes a noticeable share of the time. Big videos stream at the top of the range, while
-  batches of photos sit toward the bottom.
+2. **Unlock the iPhone and confirm Trust before starting.**  
+   PTP-based applications may cache the device state when a session begins. Connecting before the device is fully available can result in an empty or incomplete photo listing for that session.
 
-**Want it faster?** USB-C iPhone Pro models (iPhone 15 Pro and later) support USB 3 at up to
-10 Gbit/s when paired with a USB 3 cable, which is dramatically quicker. Other USB-C iPhones
-run at USB 2.0 speeds, just like Lightning. On any model, a single steady copy job is the
-sweet spot: it keeps AFC happy and finishes reliably.
+3. **Close file-manager windows accessing the iPhone.**  
+   Processes such as KDE's `kio_kamera` or `gvfs-gphoto2` may retain access to the USB device and prevent other tools from communicating with it. A `dolphin camera:/` process can also remain active after the corresponding window has been closed. Use `check-device.sh` to identify competing processes.
+
+4. **Physically disconnect the cable when resetting the connection.**  
+   On some Plasma configurations, using the eject/remove action can leave the iPhone with no active USB configuration (`cfg=[]` in `check-device.sh`). Disconnecting and reconnecting the cable reliably reinitializes the device.
+
+5. **Ensure failed connection attempts release their resources.**  
+   Retry loops are most reliable when every failed attempt closes file descriptors and releases USB handles before reconnecting.
+
+6. **Avoid concurrent access to the `ifuse` mount during transfers.**  
+   Allow the copy operation exclusive access to the mount. Running operations such as `find` or `du` concurrently may stall AFC. If the mount becomes unresponsive:
+
+   ```bash
+   fusermount -uz /tmp/iphone
+   ```
+
+   Then remount the device.
+
+7. **Use a reliable USB port and cable.**  
+   If `lsusb` detects the iPhone but `idevice_id -l` does not, try a different USB controller or motherboard port, followed by a different cable. Restarting `usbmuxd` may also help:
+
+   ```bash
+   sudo systemctl restart usbmuxd
+   ```
+
+8. **Keep the iPhone awake during long transfers.**  
+   Temporarily set:
+
+   `Settings → Display & Brightness → Auto-Lock → Never`
+
+9. **Keep the destination drive connected.**  
+   `copy-iphone.sh` pauses if the destination disappears. If an exFAT drive is disconnected during a write operation, a read-only filesystem check can be useful:
+
+   ```bash
+   fsck.exfat -n /dev/<device>
+   ```
+
+10. **Account for coarse FAT/exFAT timestamps.**  
+    When comparing files by modification time, use:
+
+    ```bash
+    --modify-window=2
+    ```
+
+11. **Terminate processes by PID where possible.**  
+    `pkill -f <pattern>` can also match the shell process invoking it when the search pattern is present in the command line.
+
+## Freeing space on the iPhone
+
+Before deleting media from the iPhone, confirm that:
+
+1. `verify.sh` reports `OK` for `DCIM`;
+2. `PhotoData/Mutations` has been copied if edited versions need to be retained;
+3. the primary archive has been synchronized to the backup drive.
+
+Media can then be removed using the Photos app and permanently deleted from **Recently Deleted**.
+
+These scripts intentionally do not perform any deletion on the iPhone.
+
+## Performance
+
+Typical transfer throughput is approximately **15–25 MB/s**, depending on the device, media mix, USB connection, and filesystem.
+
+For example, transferring 70 GB will typically take roughly one hour at the upper end of that range.
+
+Several factors affect performance:
+
+- **Lightning iPhones use USB 2.0.**  
+  Lightning-based iPhones communicate over USB 2.0 High Speed at 480 Mbit/s. `check-device.sh` typically reports this as `speed=480M`. After protocol overhead, practical USB throughput is substantially lower than the theoretical maximum.
+
+- **AFC is latency-sensitive.**  
+  Reads pass through `usbmuxd`, AFC, and the `ifuse` FUSE filesystem. File-transfer performance is therefore affected by per-request latency as well as raw USB bandwidth.
+
+- **Photo libraries contain many relatively small files.**  
+  Typical HEIC and JPEG images are only a few megabytes each, so file open/close and metadata operations represent a meaningful portion of the total transfer time. Large video files generally achieve higher sustained throughput.
+
+### USB-C iPhones
+
+USB-C iPhone Pro models beginning with the iPhone 15 Pro support USB 3 transfer rates of up to 10 Gbit/s when used with a compatible USB 3 cable.
+
+Other USB-C iPhone models may still operate at USB 2.0 data rates.
+
+Regardless of the device, a single sequential copy process is generally the most reliable approach when transferring through AFC.
 
 ## License
 
