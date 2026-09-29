@@ -83,7 +83,24 @@ your phone), and your backup is synced, you're all set. Delete from the Photos a
 
 ## How long it takes
 
-Around 15–25 MB/s over USB 2 AFC, roughly an hour for every 70 GB. A good time for a coffee ☕
+Plan on roughly **15–25 MB/s**, about an hour for every 70 GB. A good time for a coffee ☕
+
+Here's where that number comes from:
+
+- **Lightning is USB 2.0.** Every Lightning iPhone connects at USB 2.0 High Speed (480 Mbit/s),
+  whatever cable or port you use. You can see it in `check-device.sh` as `speed=480M`. After
+  USB protocol overhead that leaves about 35–40 MB/s in practice.
+- **AFC runs one request at a time.** Each read travels through usbmuxd and `ifuse` (a
+  single-threaded FUSE filesystem) and waits for its reply before the next begins, which
+  brings typical throughput to 15–25 MB/s.
+- **Photos are small files.** A typical HEIC or JPG is 2–5 MB, so opening and closing each
+  file takes a noticeable share of the time. Big videos stream at the top of the range, while
+  batches of photos sit toward the bottom.
+
+**Want it faster?** USB-C iPhone Pro models (iPhone 15 Pro and later) support USB 3 at up to
+10 Gbit/s when paired with a USB 3 cable, which is dramatically quicker. Other USB-C iPhones
+run at USB 2.0 speeds, just like Lightning. On any model, a single steady copy job is the
+sweet spot: it keeps AFC happy and finishes reliably.
 
 ## License
 
